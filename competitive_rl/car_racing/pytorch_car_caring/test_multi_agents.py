@@ -35,7 +35,7 @@ class Env():
         #self.env = gym.make('cCarRacing-v0')
         self.num_palyer = num_player
         self.env = CarRacing(num_player=num_player)
-        self.env.seed(args.seed)
+        self.env.seed(123321)
         #self.reward_threshold = self.env.spec.reward_threshold
 
     def reset(self):
@@ -54,6 +54,7 @@ class Env():
         for i in range(args.action_repeat):
             img_rgbs, rewards, dies, _ = self.env.step(actions)
             img_rgb = img_rgbs
+            dones = [False] * self.num_palyer
             for i in range(self.num_palyer):
                 # don't penalize "die state"
                 if dies[i]:
@@ -63,9 +64,10 @@ class Env():
                     rewards[i] -= 0.05
                 total_rewards[i] += rewards[i]
                 # if no reward recently, end the episode
-                #dones[i] = True if self.av_r(reward) <= -0.1 else False
-                #if done or dies[i]:
-                if dies[i]:
+                done = True if self.av_r(rewards[i]) <= -0.1 else False
+                dones[i] = done
+                if done or dies[i]:
+                #if dies[i]:
                     break
         img_grays = [self.rgb2gray(img_rgb[i]) for i in range(self.num_palyer)]
         for i in range(self.num_palyer):
@@ -73,7 +75,7 @@ class Env():
             self.stacks[i].append(img_grays[i])
             assert len(self.stacks[i]) == args.img_stack
         #return np.array(self.stack), total_reward, done, die
-        return [np.array(self.stacks[i]) for i in range(self.num_palyer)], total_rewards, False, dies
+        return [np.array(self.stacks[i]) for i in range(self.num_palyer)], total_rewards, dones, dies
 
     def render(self, *arg):
         self.env.render(*arg)
@@ -162,43 +164,55 @@ class Agent():
         action = action.squeeze().cpu().numpy()
         return action
 
-    def load_param(self):
-        self.net.load_state_dict(torch.load('param/car0.0.pkl'))
+    def load_param(self,load_path='param/car0.0_multi_agent_0.0.pkl'):
+        self.net.load_state_dict(torch.load(load_path))
 
 
 if __name__ == "__main__":
-    num_player = 4
+    num_player = 2
     agents = []
-    for _ in range(num_player):
+    '''for _ in range(num_player):
         agent = Agent()
         agent.load_param()
-        agents.append(agent)
-    #agent = Agent()
-    #agent.load_param()
+        agents.append(agent)'''
+    agent1 = Agent()
+    #agent1.load_param(load_path='param/car0.3.pkl')
+    agent1.load_param(load_path='param/car0.4.pkl')
+    agents.append(agent1)
+    agent2 = Agent()
+    #agent2.load_param(load_path='param/car0.3.pkl')
+    agent2.load_param(load_path='param/car0.4.pkl')
+    agents.append(agent2)
     env = Env(num_player=num_player)
     training_records = []
     running_score = 0
     states = env.reset()
+
     a = [[0, 0, 0] * num_player]
-    for i_ep in range(1):
+    for i_ep in range(10):
         score = [0] * num_player
         states = env.reset()
 
+        #print(env.env.seed())
         for t in range(1000):
             actions = []
             for i in range(num_player):
-                actions.append(agents[i].select_action(states[i])* np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
+                action = agents[i].select_action(states[i]) * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
+                #print(action)
+                actions.append(action)
+
             #print(states[0].shape, states[1].shape)
             env.env.manage_input(key_phrase(a))
+
             if env.env.show_all_car_obs:
                 env.env.show_all_obs(states, grayscale=False)
-            state_, reward, done, die = env.step(actions)
-            print(reward)
+            state_, reward, dones, die = env.step(actions)
             env.render()
             for i in range(num_player):
                 score[i] += reward[i]
             states = state_
-            if any(die):
+            if any(die) or any(dones):
+            #if any(die):
                 break
 
         print(f'Ep {i_ep}\tScore: {score}\t')

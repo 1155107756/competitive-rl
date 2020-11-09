@@ -12,6 +12,8 @@ from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 import visdom
 
+from competitive_rl.car_racing.car_racing_multi_players import CarRacing
+from competitive_rl.car_racing.controller import key_phrase
 from competitive_rl.car_racing.register import register_competitive_envs
 
 register_competitive_envs()
@@ -75,51 +77,61 @@ transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.flo
 
 class Env():
     """
-    Environment wrapper for CarRacing 
+    Test environment wrapper for CarRacing
     """
 
-    def __init__(self):
-        self.env = gym.make('cCarRacing-v0')
+    def __init__(self,num_player=1):
+        #self.env = gym.make('cCarRacing-v0')
+        self.num_palyer = num_player
+        self.env = CarRacing(num_player=num_player)
         self.env.seed(args.seed)
-        self.reward_threshold = self.env.spec.reward_threshold
+        #self.reward_threshold = self.env.spec.reward_threshold
 
     def reset(self):
         self.counter = 0
         self.av_r = self.reward_memory()
 
-        self.die = False
-        img_rgb = self.env.reset()
-        img_gray = self.rgb2gray(img_rgb)
-        self.stack = [img_gray] * args.img_stack  # four frames for decision
-        return np.array(self.stack)
+        self.dies = [False] * self.num_palyer
+        img_rgbs = self.env.reset()
+        img_grays = [self.rgb2gray(img_rgbs[i]) for i in range(self.num_palyer)]
+        self.stacks = [[img_grays[i]] * args.img_stack for i in range(self.num_palyer)]
+        return [np.array([img_grays[i]] * args.img_stack) for i in range(self.num_palyer)]
 
-    def step(self, action):
-        total_reward = 0
+    def step(self, actions):
+        total_rewards = [0] * self.num_palyer
+        img_rgb = []
         for i in range(args.action_repeat):
-            img_rgb, reward, die, _ = self.env.step(action)
-            # don't penalize "die state"
-            if die:
-                reward += 100
-            # green penalty
-            if np.mean(img_rgb[:, :, 1]) > 185.0:
-                reward -= 0.05
-            total_reward += reward
-            # if no reward recently, end the episode
-            done = True if self.av_r(reward) <= -0.1 else False
-            if done or die:
-                break
-        img_gray = self.rgb2gray(img_rgb)
-        self.stack.pop(0)
-        self.stack.append(img_gray)
-        assert len(self.stack) == args.img_stack
-        return np.array(self.stack), total_reward, done, die
+            img_rgbs, rewards, dies, _ = self.env.step(actions)
+            dones = [False] * self.num_palyer
+            img_rgb = img_rgbs
+            for i in range(self.num_palyer):
+                # don't penalize "die state"
+                if dies[i]:
+                    rewards[i] += 100
+                # green penalty
+                if np.mean(img_rgbs[i][:, :, 1]) > 185.0:
+                    rewards[i] -= 0.05
+                total_rewards[i] += rewards[i]
+                # if no reward recently, end the episode
+                done = True if self.av_r(rewards[i]) <= -0.1 else False
+                dones[i] = done
+                if done or dies[i]:
+                #if dies[i]:
+                    break
+        img_grays = [self.rgb2gray(img_rgb[i]) for i in range(self.num_palyer)]
+        for i in range(self.num_palyer):
+            self.stacks[i].pop(0)
+            self.stacks[i].append(img_grays[i])
+            assert len(self.stacks[i]) == args.img_stack
+        #return np.array(self.stack), total_reward, done, die
+        return [np.array(self.stacks[i]) for i in range(self.num_palyer)], total_rewards, dones, dies
+        #return [np.array(self.stacks[i]) for i in range(self.num_palyer)], total_rewards, [False], dies
 
     def render(self, *arg):
         self.env.render(*arg)
 
     @staticmethod
     def rgb2gray(rgb, norm=True):
-        # rgb image -> gray [0, 1]
         gray = np.dot(rgb[..., :], [0.299, 0.587, 0.114])
         if norm:
             # normalize
@@ -128,7 +140,6 @@ class Env():
 
     @staticmethod
     def reward_memory():
-        # record reward for last 100 steps
         count = 0
         length = 100
         history = np.zeros(length)
@@ -186,7 +197,7 @@ class Net(nn.Module):
         return (alpha, beta), v
 
 
-class Agent():
+class Agent_to_Train():
     """
     Agent for training
     """
@@ -215,8 +226,8 @@ class Agent():
         a_logp = a_logp.item()
         return action, a_logp
 
-    def save_param(self):
-        torch.save(self.net.state_dict(), 'param/car0.10.pkl')
+    def save_param(self, save_path='param/car0.0.pkl'):
+        torch.save(self.net.state_dict(), save_path)
 
     def store(self, transition):
         self.buffer[self.counter] = transition
@@ -261,31 +272,66 @@ class Agent():
                 # nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
+    def load_param(self,load_path='param/car0.2.pkl'):
+        self.net.load_state_dict(torch.load(load_path))
+
+class Trained_Agent():
+    """
+    Agent for testing
+    """
+
+    def __init__(self):
+        self.net = Net().float().to(device)
+
+    def select_action(self, state):
+        state = torch.from_numpy(state).float().to(device).unsqueeze(0)
+        with torch.no_grad():
+            alpha, beta = self.net(state)[0]
+        action = alpha / (alpha + beta)
+
+        action = action.squeeze().cpu().numpy()
+        return action
+
+    def load_param(self,load_path='param/car0.2.pkl'):
+        self.net.load_state_dict(torch.load(load_path))
 
 if __name__ == "__main__":
-    agent = Agent()
-    env = Env()
+    num_player = 2
+    agent_to_train_1 = Agent_to_Train()
+    #agent_to_train_1.load_param('param/car0.3 - 副本 (5).pkl')
+    agent_to_train = Agent_to_Train()
+    #agent_to_train.load_param('param/car0.3 - 副本 (5).pkl')
+
+    env = Env(num_player=num_player)
     #if args.vis:
     draw_reward = DrawLine(env="car", title="PPO", xlabel="Episode", ylabel="Moving averaged episode reward")
 
     training_records = []
     running_score = 0
-    state = env.reset()
+    states = env.reset()
+    a = [[0, 0, 0] * num_player]
     for i_ep in range(100000):
         score = 0
-        state = env.reset()
+        states = env.reset()
 
         for t in range(1000):
-            action, a_logp = agent.select_action(state)
-            state_, reward, done, die = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
-            if args.render:
+            env.env.manage_input(key_phrase(a))
+            action1, a_logp_1 = agent_to_train.select_action(states[0])
+            action2,  a_logp_2= agent_to_train_1.select_action(states[1])
+            actions = [action1 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]), action2 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])]
+            states_, rewards, done, die = env.step(actions)
+            #if args.render:
+            if env.env.isrender:
                 env.render()
-            if agent.store((state, action, a_logp, reward, state_)):
-                print('updating')
-                agent.update()
-            score += reward
-            state = state_
-            if done or die:
+            if agent_to_train.store((states[0], action1, a_logp_1, rewards[0], states_[0])):
+                print('updating agent_to_train')
+                agent_to_train.update()
+            if agent_to_train_1.store((states[1], action2, a_logp_2, rewards[1], states_[1])):
+                print('updating agent_to_train_1')
+                agent_to_train_1.update()
+            score += rewards[0]
+            states = states_
+            if any(die) or any(done):
                 break
         running_score = running_score * 0.99 + score * 0.01
 
@@ -293,7 +339,8 @@ if __name__ == "__main__":
             #if args.vis:
             draw_reward(xdata=i_ep, ydata=running_score)
             print('Ep {}\tLast score: {:.2f}\tMoving average score: {:.2f}'.format(i_ep, score, running_score))
-            agent.save_param()
-        if running_score > env.reward_threshold:
+            agent_to_train.save_param('param/car0.3.pkl')
+            #agent_to_train_1.save_param('param/car0.3.pkl')
+        if running_score > 900:
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break

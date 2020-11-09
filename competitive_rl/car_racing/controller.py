@@ -9,6 +9,8 @@ def key_phrase(a):
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_z:
                 return -2
+            elif event.key == pygame.K_r:
+                return -4
             elif event.key == pygame.K_0:
                 return -1
             elif event.key == pygame.K_1:

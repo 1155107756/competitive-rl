@@ -100,8 +100,8 @@ class FrictionDetector(contactListener):
         u2 = contact.fixtureB.body.userData
         if u1 and u2:
             if u1 and "car_number" in u1.__dict__ and u2 and "car_number" in u2.__dict__:
-                self.env.rewards[u1.car_number] -= 1000 / FPS
-                self.env.rewards[u2.car_number] -= 1000 / FPS
+                self.env.rewards[u1.car_number] -= 100 / FPS
+                self.env.rewards[u2.car_number] -= 100 / FPS
                 return
 
     def EndContact(self, contact):
@@ -146,11 +146,11 @@ class CarRacing(gym.Env, EzPickle):
         'video.frames_per_second': FPS
     }
 
-    def __init__(self, num_player=1, verbose=1, seed=8367813160709901366):
+    def __init__(self, num_player=2, verbose=1):
         pygame.init()
         pygame.font.init()
         EzPickle.__init__(self)
-        self.seed(seed=seed)
+        self.seed()
         self.contactListener_keepref = FrictionDetector(self)
         self.world = Box2D.b2World(
             (0, 0),
@@ -187,12 +187,15 @@ class CarRacing(gym.Env, EzPickle):
         self.world_scale = 10
         self.obs_scale = (self.world_scale / (100 / math.sqrt(96))) * 1.8
         self.world_size = world_width, world_height = 10000,10000
+        self.obs_size  = (10000/ (100 / math.sqrt(96))) * 1.8, (10000/ (100 / math.sqrt(96))) * 1.8
 
         self.obs = {}
         self.info = ["" for x in range(self.num_player)]
 
         self.playground = None
         self.observation_playground = None
+
+        self.isrender=False
 
         self.fd_tile = fixtureDef(
             shape=polygonShape(vertices=[(0, 0), (1, 0), (1, -1), (0, -1)])
@@ -420,8 +423,8 @@ class CarRacing(gym.Env, EzPickle):
         self.t = 0.0
         self.road_poly = []
         self.observation_screens = [pygame.Surface((STATE_W,STATE_H))] * self.num_player
-        self.world_map = pygame.Surface(self.world_size)
-        self.playground = pygame.Surface(self.world_size)
+        #self.world_map = pygame.Surface(self.world_size)
+        #self.playground = pygame.Surface(self.world_size)
         if use_local_track != "":
             self._create_track(use_local_track=use_local_track, record_track_to=record_track_to)
         else:
@@ -448,7 +451,7 @@ class CarRacing(gym.Env, EzPickle):
             if event.type == pygame.QUIT:
                 pygame.quit()
                 quit()
-                
+
         if action is not None:
             if self.num_player > 1 :
                 for i in range(len(self.cars)):
@@ -462,8 +465,9 @@ class CarRacing(gym.Env, EzPickle):
 
         for car in self.cars:
             car.step(1.0/FPS)
-        self.world.Step(1.0/FPS, 6*30, 2*30)
+        self.world.Step(1.0/FPS, 6*30, 60)
         self.t += 1.0/FPS
+
 
         step_rewards = [0] * self.num_player
         if action is not None:  # First step without action, called from reset()
@@ -621,7 +625,6 @@ class CarRacing(gym.Env, EzPickle):
         pos = self.camera_offset
         angle = self.camera_angle
 
-
         if mode == "human":
             width, height = window_size
             pos = (
@@ -671,7 +674,11 @@ class CarRacing(gym.Env, EzPickle):
                 self.show_all_car_obs = True
             if input_number == -3:
                 self.isopen = False
-
+            if input_number == -4:
+                if(self.isrender):
+                    self.isrender = False
+                else:
+                    self.isrender = True
     def render(self, playground=None, playground_surface=None, mode="human", drawing_for_player_num=None):
         if mode == "human":
             self.camera_update()
@@ -697,14 +704,20 @@ class CarRacing(gym.Env, EzPickle):
             if grayscale:
                 grayobs = np.dot(obs[i][...,:3], [0.299, 0.587, 0.114])
                 plt.imshow(grayobs, cmap=plt.get_cmap('gray'))
+                #grayobs = np.dot(obs[i][...,:3], [0.299, 0.587, 0.114])
+                #print(grayobs.shape)
+                #plt.imshow(grayobs, cmap=plt.get_cmap('gray'))
+                #plt.imshow(obs[i][0], cmap='gray')
+                pass
             else:
                 plt.imshow(obs[i])
             plt.show()
         self.show_all_car_obs = False
 
 if __name__ == "__main__":
-    env = CarRacing(num_player=1)
-    
+    #register_competitive_envs()
+    env = CarRacing(num_player=2)
+    #env = gym.make('cCarRacing-v0')
     # example: env.reset(use_local_track="./track/test.json",record_track_to="")
     # example: env.reset(use_local_track="",record_track_to="./track")
     # env.reset(use_local_track="./track/test3.json",record_track_to="")
@@ -714,11 +727,15 @@ if __name__ == "__main__":
     clock = pygame.time.Clock()
     while True:
         env.manage_input(key_phrase(a))
-        env.render()
-        observation, reward, done, info = env.step(a[0])
-
+        if env.isrender:
+            env.render()
+        observation, reward, done, info = env.step(a)
+        #plt.imshow(observation[0], cmap='gray')
         if env.show_all_car_obs:
-            env.show_all_obs([observation], grayscale=True)
+            plt.imshow(observation[0], cmap='gray')
+            env.show_all_obs(observation, grayscale=True)
         clock.tick(60)
-        fps = clock.get_fps()
+
+        #fps = clock.get_fps()
+        #print(fps)
 

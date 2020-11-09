@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 
 import gym
+import pygame
 import torch
 import torch.nn as nn
 
@@ -148,15 +149,17 @@ class Agent():
 
     def select_action(self, state):
         state = torch.from_numpy(state).float().to(device).unsqueeze(0)
+
         with torch.no_grad():
             alpha, beta = self.net(state)[0]
+
         action = alpha / (alpha + beta)
 
         action = action.squeeze().cpu().numpy()
         return action
 
     def load_param(self):
-        self.net.load_state_dict(torch.load('param/car0.0.pkl'))
+        self.net.load_state_dict(torch.load('param/car0.4.pkl'))
 
 
 if __name__ == "__main__":
@@ -168,12 +171,17 @@ if __name__ == "__main__":
     running_score = 0
     state = env.reset()
     a = [0, 0, 0]
-    for i_ep in range(1):
+    for i_ep in range(1000):
+
+        clock = pygame.time.Clock()
+
         score = 0
         state = env.reset()
 
         for t in range(1000):
+
             action = agent.select_action(state)
+            print(action)
             env.env.manage_input(key_phrase(a))
             state_, reward, done, die = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
             env.render()
@@ -181,5 +189,7 @@ if __name__ == "__main__":
             state = state_
             if done or die:
                 break
-
+            clock.tick(1000)
+            fps = clock.get_fps()
+            #print(fps)
         print('Ep {}\tScore: {:.2f}\t'.format(i_ep, score))
