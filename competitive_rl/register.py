@@ -1,4 +1,4 @@
-from competitive_rl.car_racing import register_car_racing
+from competitive_rl.car_racing.register import register_car_racing
 from competitive_rl.pong import register_pong
 
 
